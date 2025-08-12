@@ -1,51 +1,228 @@
-<div id="my-widget">
-  <h3>Quick Contact</h3>
-  <p>Need help? Reach out to us directly.</p>
-  <form id="widget-form">
-    <input type="text" id="name" placeholder="Your Name" required>
-    <input type="email" id="email" placeholder="Your Email" required>
-    <button type="submit">Send</button>
-  </form>
-  <p id="status-msg" style="display:none;"></p>
-</div>
-
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>POS Tip of the Day</title>
 <style>
-  #my-widget {
-    max-width: 250px;
-    font-family: Arial, sans-serif;
-    padding: 15px;
-    border: 2px solid #007a5a;
-    border-radius: 10px;
-    background: #f8f8f8;
-    box-shadow: 0px 4px 6px rgba(0,0,0,0.1);
+  /* ===== Designer Hat: clean, on-brand, themeable ===== */
+  :root{
+    --bg:#0b1220;--card:#11182a;--text:#e9eefc;--muted:#a8b3cf;--accent:#20d58a;--border:rgba(255,255,255,.07);
+    --radius:14px;--shadow:0 10px 24px rgba(0,0,0,.25);
   }
-  #my-widget h3 {
-    margin-top: 0;
-    color: #007a5a;
+  [data-theme="light"]{--bg:#f6f8ff;--card:#ffffff;--text:#0c1529;--muted:#4d5872;--accent:#0aa86e;--border:rgba(10,19,40,.08);--shadow:0 8px 20px rgba(14,22,40,.08)}
+  *{box-sizing:border-box} html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--text);font:15px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:460px;margin:0 auto;padding:12px}
+  .card{
+    background:linear-gradient(180deg,var(--card),color-mix(in oklab,var(--card),#000 6%));
+    border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow);
+    padding:14px; position:relative; overflow:hidden;
   }
-  #my-widget input, #my-widget button {
-    width: 100%;
-    padding: 8px;
-    margin: 6px 0;
-    border: 1px solid #ccc;
-    border-radius: 5px;
+  .hdr{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+  .logo{width:20px;height:20px;border-radius:5px;object-fit:contain;display:none}
+  .logo.show{display:block}
+  .dot{width:10px;height:10px;border-radius:50%;background:var(--accent);box-shadow:0 0 10px var(--accent)}
+  .title{font-weight:700;letter-spacing:.2px;font-size:13px;text-transform:uppercase;color:var(--muted)}
+  .right{margin-left:auto;display:flex;gap:6px;align-items:center;color:var(--muted);font-size:12px}
+  .pill{border:1px solid var(--border);padding:2px 8px;border-radius:999px}
+  .tip{font-size:16px;margin:8px 0 10px}
+  .meta{font-size:12px;color:var(--muted);display:flex;gap:8px;flex-wrap:wrap}
+  .controls{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+  button{
+    appearance:none;border:1px solid var(--border);background:#1b2640;color:var(--text);cursor:pointer;
+    padding:8px 10px;border-radius:10px;font-size:13px;
   }
-  #my-widget button {
-    background: #007a5a;
-    color: white;
-    border: none;
-    cursor: pointer;
-  }
-  #my-widget button:hover {
-    background: #005f47;
-  }
+  [data-theme="light"] button{background:#f1f4ff}
+  button:hover{filter:brightness(1.08)}
+  .grow{flex:1 1 auto}
+  a{color:var(--accent);text-decoration:none} a:hover{text-decoration:underline}
+  .sr-only{position:absolute;left:-9999px}
+  @media (prefers-reduced-motion: reduce){*{transition:none!important;animation:none!important}}
 </style>
+</head>
+<body>
+  <div class="wrap" role="region" aria-label="POS Tip of the Day">
+    <div class="card">
+      <div class="hdr">
+        <img id="logo" class="logo" alt="" />
+        <div class="dot" aria-hidden="true"></div>
+        <div id="title" class="title">POS Tip of the Day</div>
+        <div class="right">
+          <span id="datePill" class="pill"></span>
+          <span id="idxPill" class="pill" aria-live="polite"></span>
+        </div>
+      </div>
+
+      <div id="tipText" class="tip" aria-live="polite">Loading tip…</div>
+      <div id="tipMeta" class="meta"></div>
+
+      <div class="controls">
+        <button id="prevBtn" type="button" aria-label="Previous tip">◀︎ Prev</button>
+        <button id="nextBtn" type="button" aria-label="Next tip">Next ▶︎</button>
+        <button id="todayBtn" type="button" class="grow" aria-label="Jump to today’s tip">Today’s Tip</button>
+        <button id="copyBtn" type="button" aria-label="Copy this tip">Copy</button>
+      </div>
+      <div id="status" class="sr-only" aria-live="assertive"></div>
+    </div>
+  </div>
 
 <script>
-  document.getElementById('widget-form').addEventListener('submit', function(e) {
-    e.preventDefault();
-    document.getElementById('status-msg').innerText = "Thanks! We'll be in touch soon.";
-    document.getElementById('status-msg').style.display = 'block';
-    this.reset();
+/* ===== Lead Dev Hat: robust, configurable, no deps ===== */
+(function(){
+  const qs = new URLSearchParams(location.search);
+
+  // Theming / Branding params
+  const theme       = (qs.get("theme")||"").toLowerCase(); // "light" or "dark"
+  const accent      = qs.get("accent");
+  const titleParam  = qs.get("title");
+  const logoUrl     = qs.get("logo"); // e.g., https://.../logo.png
+  if(theme === "light") document.documentElement.setAttribute("data-theme","light");
+  if(accent) document.documentElement.style.setProperty("--accent", accent);
+
+  // Elements
+  const el = (id)=>document.getElementById(id);
+  const tipEl   = el('tipText'), metaEl = el('tipMeta'), datePill = el('datePill'), idxPill = el('idxPill');
+  const prevBtn = el('prevBtn'), nextBtn = el('nextBtn'), todayBtn = el('todayBtn'), copyBtn = el('copyBtn');
+  const titleEl = el('title'), statusEl = el('status'), logoEl = el('logo');
+
+  if(titleParam){ titleEl.textContent = titleParam; }
+  if(logoUrl){ logoEl.src = logoUrl; logoEl.classList.add('show'); logoEl.setAttribute('alt', (qs.get("logoAlt")||"Brand")); }
+
+  // Local fallback tips (curated for onePOS context)
+  const FALLBACK = [
+    { text:"After Save/Next in Bulk Edit, press Tab twice to jump back to the first field—no mouse needed.", category:"Speed" },
+    { text:"SNBC S80 printers should run at 115200 baud. If the self-test shows otherwise, update it and power cycle.", category:"Hardware" },
+    { text:"Sales Categories double as report filters. Keep names consistent so analytics stay clean.", category:"Reporting" },
+    { text:"Use Add Like to clone similar items—perfect for bulk menu builds.", category:"Build" },
+    { text:"Create screen groups & sales categories early—reporting gets effortless later.", category:"Menu Design" },
+    { text:"Cash price = round up to nearest quarter. Card price = cash + 4%.", category:"Pricing" },
+    { text:"Serial printer in Console: Device=Printer–Serial, Port=1 (COM1), Params=115200,n,8,1.", category:"Hardware" },
+    { text:"Define required vs optional modifiers before entry. Saves rebuilds and prevents checkout errors.", category:"Workflow" },
+    { text:"If you click something every item, there’s a faster way (Tab, Enter, arrows).", category:"Speed" },
+    { text:"Use Title Case for item names; ditch trailing spaces—search and imports will thank you.", category:"Data Hygiene" },
+    { text:"Price groups + item types enable smarter report slicing—decide the scheme before you build.", category:"Reporting" },
+    { text:"After printing a test page, power cycle the printer to clear sticky states.", category:"Hardware" },
+    { text:"Template one appetizer item, then Add Like for the rest. Consistency first; speed follows.", category:"Build" }
+  ];
+
+  // Optional remote source: ?src=https://.../tips.json
+  // Expected JSON: { "tips": [ { "text":"...", "category":"...", "link":"...", "linkText":"..." }, ... ] }
+  const SRC = qs.get("src");
+  const CACHE_KEY = "pos_tips_cache_v1";
+  const CACHE_TTL_MS = 24*60*60*1000; // 24h
+  const savedIndex = localStorage.getItem('pos_tip_index');
+
+  function dayOfYear(d=new Date()){
+    const start = new Date(d.getFullYear(),0,0);
+    const diff = d - start + ((start.getTimezoneOffset() - d.getTimezoneOffset())*60000);
+    return Math.floor(diff/86400000);
+  }
+  const todayIndexSeed = dayOfYear() % FALLBACK.length;
+
+  function safeTips(x){
+    if(!x || !Array.isArray(x.tips)) return null;
+    const cleaned = x.tips.map(t => (t && typeof t.text === 'string') ? {
+      text: String(t.text).trim(),
+      category: t.category ? String(t.category).trim() : undefined,
+      link: t.link ? String(t.link).trim() : undefined,
+      linkText: t.linkText ? String(t.linkText).trim() : undefined
+    } : null).filter(Boolean);
+    return cleaned.length ? cleaned : null;
+  }
+
+  function loadFromCache(){
+    try{
+      const raw = localStorage.getItem(CACHE_KEY);
+      if(!raw) return null;
+      const obj = JSON.parse(raw);
+      if(Date.now() - (obj.savedAt||0) > CACHE_TTL_MS) return null;
+      const tips = safeTips({tips: obj.tips});
+      return tips || null;
+    }catch{return null}
+  }
+  function saveToCache(tips){
+    try{ localStorage.setItem(CACHE_KEY, JSON.stringify({savedAt:Date.now(), tips})); }catch{}
+  }
+
+  async function fetchTips(){
+    if(!SRC) return FALLBACK;
+    const cached = loadFromCache();
+    if(cached) return cached;
+    try{
+      const res = await fetch(SRC, {cache:"force-cache"});
+      if(!res.ok) throw new Error(String(res.status));
+      const data = await res.json();
+      const tips = safeTips(data) || FALLBACK;
+      saveToCache(tips);
+      return tips;
+    }catch(e){
+      console.warn("Tip fetch failed, using fallback.", e);
+      status("Using built-in tips (source unavailable).");
+      return FALLBACK;
+    }
+  }
+
+  let TIPS = FALLBACK, index = 0, todayIndex = todayIndexSeed;
+
+  function escapeHtml(s){return s.replace(/[&<>"']/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]))}
+  function render(i){
+    if(!TIPS.length) return;
+    const t = TIPS[i];
+    tipEl.innerHTML = escapeHtml(t.text);
+    const bits = [];
+    if(t.category) bits.push(`<span class="pill">${escapeHtml(t.category)}</span>`);
+    if(t.link){
+      bits.push(`<a class="pill" href="${t.link}" target="_blank" rel="noopener">${escapeHtml(t.linkText||"Learn more")} ↗</a>`);
+    }
+    metaEl.innerHTML = bits.join(" ");
+    datePill.textContent = new Date().toLocaleDateString(undefined,{month:'short',day:'numeric'});
+    idxPill.textContent = `${i+1}/${TIPS.length}`;
+    index = i;
+    try{ localStorage.setItem('pos_tip_index', String(index)); }catch{}
+    queueResize();
+  }
+
+  function status(msg){ statusEl.textContent = msg; }
+
+  // Controls
+  prevBtn.addEventListener('click', ()=> render((index-1+TIPS.length)%TIPS.length));
+  nextBtn.addEventListener('click', ()=> render((index+1)%TIPS.length));
+  todayBtn.addEventListener('click', ()=>{
+    try{ localStorage.removeItem('pos_tip_index'); }catch{}
+    render(todayIndex);
   });
+  copyBtn.addEventListener('click', async ()=>{
+    try{
+      await navigator.clipboard.writeText(TIPS[index].text);
+      copyBtn.textContent = "Copied!";
+      status("Tip copied to clipboard");
+    }catch{
+      copyBtn.textContent = "Copy failed";
+      status("Copy failed");
+    }
+    setTimeout(()=> copyBtn.textContent = "Copy", 1200);
+  });
+
+  // Auto-resize: postMessage height to parent so the iframe can adapt
+  let resizeTimer;
+  function queueResize(){
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(()=>{
+      const h = document.documentElement.scrollHeight;
+      parent.postMessage({ type:"pos-tip-size", height:h }, "*");
+    }, 30);
+  }
+  new ResizeObserver(queueResize).observe(document.documentElement);
+
+  // Init
+  (async function init(){
+    TIPS = await fetchTips();
+    todayIndex = dayOfYear() % TIPS.length;
+    const start = savedIndex !== null ? Math.max(0, Math.min(parseInt(savedIndex,10)||0, TIPS.length-1)) : todayIndex;
+    render(start);
+  })();
+})();
 </script>
+</body>
+</html>
