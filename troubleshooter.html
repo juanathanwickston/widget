@@ -1,1 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>POS Troubleshooting Flow</title>
+<style>
+  :root{
+    --bg:#0b1220; --card:#11182a; --text:#e9eefc; --muted:#a8b3cf; --accent:#20d58a; --border:rgba(255,255,255,.08);
+    --radius:14px; --shadow:0 8px 24px rgba(0,0,0,.25);
+  }
+  body{margin:0;background:var(--bg);color:var(--text);font:15px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:640px;margin:0 auto;padding:12px}
+  .card{background:linear-gradient(180deg,var(--card),#0f1726);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px}
+  .hdr{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+  .dot{width:10px;height:10px;border-radius:50%;background:var(--accent);box-shadow:0 0 10px var(--accent)}
+  .title{font-weight:700;letter-spacing:.2px;font-size:14px;text-transform:uppercase;color:var(--muted)}
+  .sub{font-size:12px;color:var(--muted);margin-left:auto}
+  .q{font-size:18px;margin:6px 0 10px}
+  .help{font-size:13px;color:var(--muted);margin-top:2px}
+  .btns{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}
+  button{
+    appearance:none;border:1px solid var(--border);background:#1b2640;color:var(--text);padding:8px 10px;border-radius:10px;font-size:14px;cursor:pointer
+  }
+  button:hover{filter:brightness(1.08)}
+  .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+  .pill{border:1px solid var(--border);padding:4px 10px;border-radius:999px;font-size:12px;color:var(--muted)}
+  .steps{margin-top:8px;padding:12px;border:1px solid var(--border);border-radius:12px;background:rgba(255,255,255,.03)}
+  .steps li{margin:6px 0}
+  .nav{display:flex;gap:8px;margin-top:10px}
+  .muted{color:var(--muted)}
+  .sr-only{position:absolute;left:-9999px}
+  @media (max-width:420px){ .q{font-size:16px} }
+</style>
+</head>
+<body>
+<div class="wrap" role="region" aria-label="POS Troubleshooting Flow">
+  <div class="card">
+    <div class="hdr">
+      <div class="dot" aria-hidden="true"></div>
+      <div class="title">POS Troubleshooter</div>
+      <div id="crumbs" class="sub"></div>
+    </div>
+
+    <div id="content">
+      <!-- dynamic -->
+    </div>
+
+    <div class="nav">
+      <button id="backBtn" type="button" disabled>← Back</button>
+      <button id="restartBtn" type="button">Restart</button>
+      <span class="pill" id="hintPill">Tip: Use ↑/↓ then Enter</span>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ===== Data: edit/expand flows here ===== */
+const FLOW = {
+  id: "root",
+  prompt: "What seems to be the issue?",
+  options: [
+    { label: "Printer isn’t printing", next: "printer_offline" },
+    { label: "Menu changes aren’t showing", next: "menu_not_updating" },
+    { label: "Card reader / payments failing", next: "card_reader" },
+    { label: "Network / terminals offline", next: "network" },
+    { label: "KDS not showing tickets", next: "kds" }
+  ]
+};
+
+const NODES = {
+  printer_offline: {
+    prompt: "Let’s check the obvious first.",
+    steps: [
+      "Is the printer powered on and paper loaded?",
+      "Print a self-test (hold feed while powering on).",
+      "If self-test prints, power cycle the printer.",
+      "Check cable path: printer → COM/USB/Ethernet → terminal/switch.",
+    ],
+    options: [
+      { label: "Self-test failed", next: "printer_selftest_failed" },
+      { label: "Self-test OK but POS won’t print", next: "printer_pos_config" }
+    ]
+  },
+  printer_selftest_failed: {
+    prompt: "Hardware path likely at fault.",
+    steps: [
+      "Try a different outlet and known-good power cable.",
+      "Try a different data cable/port (USB/COM/Ethernet).",
+      "Swap with a known-good printer if available.",
+      "If serial: verify correct null-modem/adapter in chain."
+    ],
+    options: [
+      { label: "Fixed it", next: "done_fixed" },
+      { label: "Still failing", next: "printer_rma" }
+    ]
+  },
+  printer_pos_config: {
+    prompt: "POS configuration time.",
+    steps: [
+      "Verify device mapping in Console (Printer → correct terminal).",
+      "For serial printers: Device=Printer–Serial, Port=1 (physical COM1), Params=115200,n,8,1.",
+      "Match baud rate to the printer self-test (115200 recommended).",
+      "Test print from the POS/Console and power cycle after a test page."
+    ],
+    options: [
+      { label: "Printing now", next: "done_fixed" },
+      { label: "Still not printing", next: "printer_logs" }
+    ]
+  },
+  printer_logs: {
+    prompt: "Dig a little deeper.",
+    steps: [
+      "Check Windows device manager / COM port assignment (if applicable).",
+      "Confirm driver installed and not showing warnings.",
+      "Check firewall/antivirus exceptions for POS print service.",
+      "Escalate to support with logs and screenshots."
+    ],
+    options: [
+      { label: "Open support ticket", next: "open_ticket" },
+      { label: "Go back", back: true }
+    ]
+  },
+  printer_rma: {
+    prompt: "Suspected hardware failure.",
+    steps: [
+      "Document serial number and site details.",
+      "Attach photo of error lights/self-test attempt.",
+      "Proceed with RMA/replacement process."
+    ],
+    options: [
+      { label: "Open support ticket", next: "open_ticket" },
+      { label: "Restart", next: "root" }
+    ]
+  },
+
+  menu_not_updating: {
+    prompt: "Menu changes aren’t live—let’s sync.",
+    steps: [
+      "Confirm you saved/published changes in Console.",
+      "Trigger a menu sync/push to terminals.",
+      "Check that item belongs to the correct Screen Group & Sales Category.",
+      "Verify price levels/time-based rules (happy hour, groups).",
+      "Restart terminal app to force refresh."
+    ],
+    options: [
+      { label: "Changes appear now", next: "done_fixed" },
+      { label: "Still missing", next: "menu_cache" }
+    ]
+  },
+  menu_cache: {
+    prompt: "Deep refresh and scope check.",
+    steps: [
+      "Double-check you edited the correct store/environment.",
+      "For multi-unit: ensure changes on the correct profile/template.",
+      "Clear local cache or restart the device.",
+      "If mirrored items: confirm the parent template updated."
+    ],
+    options: [
+      { label: "Resolved", next: "done_fixed" },
+      { label: "Escalate", next: "open_ticket" }
+    ]
+  },
+
+  card_reader: {
+    prompt: "Payments failing—narrow it down.",
+    steps: [
+      "Check reader power/USB pairing and indicator lights.",
+      "Restart reader and POS app; reseat cables.",
+      "Try a $0.01 test transaction or card swipe/dip/tap variety.",
+      "Verify network path (readers often need outbound access).",
+      "If tokenized gateway: confirm credentials aren’t expired."
+    ],
+    options: [
+      { label: "Works after restart", next: "done_fixed" },
+      { label: "Hardware error persists", next: "card_reader_hw" }
+    ]
+  },
+  card_reader_hw: {
+    prompt: "Hardware or configuration.",
+    steps: [
+      "Test on another terminal/USB port.",
+      "Update firmware if supported.",
+      "Swap with a known-good reader.",
+      "Collect device serial, firmware, and error codes."
+    ],
+    options: [
+      { label: "Open support ticket", next: "open_ticket" },
+      { label: "Restart", next: "root" }
+    ]
+  },
+
+  network: {
+    prompt: "Network / terminals offline.",
+    steps: [
+      "Check switch/router lights and ISP status.",
+      "Reboot modem → router → switch → terminals (in that order).",
+      "Verify SSID/ethernet for terminals; avoid guest/VLAN mismatch.",
+      "Ping server/local controller; check DHCP/IP conflicts.",
+      "If using VPN/tunnel: confirm it’s connected."
+    ],
+    options: [
+      { label: "Back online", next: "done_fixed" },
+      { label: "Still offline", next: "network_deep" }
+    ]
+  },
+  network_deep: {
+    prompt: "Deeper network checks.",
+    steps: [
+      "Check cables for link lights; replace any suspect runs.",
+      "Confirm POS server/services are running.",
+      "Check firewall rules for POS ports to terminals/printers.",
+      "Escalate with topology diagram and IPs."
+    ],
+    options: [
+      { label: "Open support ticket", next: "open_ticket" },
+      { label: "Restart", next: "root" }
+    ]
+  },
+
+  kds: {
+    prompt: "KDS not receiving tickets.",
+    steps: [
+      "Verify KDS device is online and on the correct network/VLAN.",
+      "Confirm KDS station mapping in Console (items → KDS route).",
+      "Check that order types and coursing rules match expectations.",
+      "Restart KDS app/device to resubscribe."
+    ],
+    options: [
+      { label: "Tickets flowing", next: "done_fixed" },
+      { label: "Still empty", next: "kds_deep" }
+    ]
+  },
+  kds_deep: {
+    prompt: "Rule mapping & connectivity.",
+    steps: [
+      "Validate printers/KDS share the same item routes (no missing category).",
+      "Check any throttling/hold logic or expo rules.",
+      "Inspect logs for subscription errors or timeouts."
+    ],
+    options: [
+      { label: "Open support ticket", next: "open_ticket" },
+      { label: "Restart", next: "root" }
+    ]
+  },
+
+  done_fixed: {
+    prompt: "Nice! Issue resolved.",
+    steps: [
+      "Document what fixed it so others can repeat.",
+      "If this repeats, capture before/after state for trends."
+    ],
+    options: [
+      { label: "Restart", next: "root" }
+    ]
+  },
+  open_ticket: {
+    prompt: "Open a support ticket.",
+    steps: [
+      "Include site name, contact, urgency, and clear problem summary.",
+      "Attach screenshots/logs/error codes and what you tried already."
+    ],
+    options: [
+      { label: "Restart", next: "root" }
+    ]
+  }
+};
+
+/* ===== Runtime & UI ===== */
+const content = document.getElementById("content");
+const backBtn = document.getElementById("backBtn");
+const restartBtn = document.getElementById("restartBtn");
+const crumbs = document.getElementById("crumbs");
+
+let stack = [FLOW]; // navigation stack
+let chosen = [];    // chosen labels for breadcrumb
+let currentIndex = 0;
+
+function renderNode(node){
+  content.innerHTML = "";
+  const q = document.createElement("div");
+  q.className = "q";
+  q.textContent = node.prompt;
+  content.appendChild(q);
+
+  if(node.steps && node.steps.length){
+    const help = document.createElement("div");
+    help.className = "help";
+    help.textContent = "Work through these steps:";
+    content.appendChild(help);
+
+    const ol = document.createElement("ol");
+    ol.className = "steps";
+    node.steps.forEach(s => {
+      const li = document.createElement("li"); li.textContent = s; ol.appendChild(li);
+    });
+    content.appendChild(ol);
+
+    const row = document.createElement("div"); row.className = "row";
+    const copyBtn = document.createElement("button"); copyBtn.textContent = "Copy steps";
+    copyBtn.onclick = async () => {
+      const text = [node.prompt, ...node.steps.map((s,i)=>`${i+1}. ${s}`)].join("\n");
+      try{ await navigator.clipboard.writeText(text); copyBtn.textContent = "Copied!"; setTimeout(()=>copyBtn.textContent="Copy steps",1200);}catch{}
+    };
+    const printBtn = document.createElement("button"); printBtn.textContent = "Print";
+    printBtn.onclick = ()=> window.print();
+    row.append(copyBtn, printBtn);
+    content.appendChild(row);
+  }
+
+  if(node.options && node.options.length){
+    const btns = document.createElement("div"); btns.className = "btns"; btns.setAttribute("role","listbox");
+    node.options.forEach((opt, idx) => {
+      const b = document.createElement("button");
+      b.textContent = opt.label; b.setAttribute("role","option"); b.tabIndex = (idx===0?0:-1);
+      b.onclick = () => {
+        if(opt.back){ goBack(); return; }
+        chosen.push(opt.label);
+        gotoNode(opt.next);
+      };
+      btns.appendChild(b);
+    });
+    content.appendChild(btns);
+  }
+
+  // Breadcrumbs
+  crumbs.textContent = chosen.length ? chosen.join(" • ") : "Start";
+
+  // Nav state
+  backBtn.disabled = (stack.length <= 1);
+  currentIndex = 0;
+  focusFirstButton();
+}
+
+function gotoNode(id){
+  if(id === "root"){ stack = [FLOW]; chosen = []; renderNode(FLOW); return; }
+  const next = NODES[id];
+  if(!next){ console.warn("Missing node:", id); return; }
+  stack.push(next);
+  renderNode(next);
+}
+
+function goBack(){
+  if(stack.length > 1){
+    stack.pop();
+    chosen.pop();
+    renderNode(stack[stack.length-1]);
+  }
+}
+
+// Keyboard nav for options
+function focusFirstButton(){
+  const first = content.querySelector(".btns button");
+  if(first) first.focus();
+}
+content.addEventListener("keydown", (e)=>{
+  const btns = Array.from(content.querySelectorAll(".btns button"));
+  if(!btns.length) return;
+  const i = btns.indexOf(document.activeElement);
+  if(e.key === "ArrowRight" || e.key === "ArrowDown"){ e.preventDefault(); btns[(i+1+btns.length)%btns.length].focus(); }
+  if(e.key === "ArrowLeft"  || e.key === "ArrowUp"){ e.preventDefault(); btns[(i-1+btns.length)%btns.length].focus(); }
+  if(e.key === "Home"){ e.preventDefault(); btns[0].focus(); }
+  if(e.key === "End"){ e.preventDefault(); btns[btns.length-1].focus(); }
+});
+
+backBtn.onclick = goBack;
+restartBtn.onclick = () => { stack = [FLOW]; chosen = []; renderNode(FLOW); };
+
+renderNode(FLOW);
+</script>
+</body>
+</html>
 
