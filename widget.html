@@ -1,0 +1,51 @@
+<div id="my-widget">
+  <h3>Quick Contact</h3>
+  <p>Need help? Reach out to us directly.</p>
+  <form id="widget-form">
+    <input type="text" id="name" placeholder="Your Name" required>
+    <input type="email" id="email" placeholder="Your Email" required>
+    <button type="submit">Send</button>
+  </form>
+  <p id="status-msg" style="display:none;"></p>
+</div>
+
+<style>
+  #my-widget {
+    max-width: 250px;
+    font-family: Arial, sans-serif;
+    padding: 15px;
+    border: 2px solid #007a5a;
+    border-radius: 10px;
+    background: #f8f8f8;
+    box-shadow: 0px 4px 6px rgba(0,0,0,0.1);
+  }
+  #my-widget h3 {
+    margin-top: 0;
+    color: #007a5a;
+  }
+  #my-widget input, #my-widget button {
+    width: 100%;
+    padding: 8px;
+    margin: 6px 0;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+  }
+  #my-widget button {
+    background: #007a5a;
+    color: white;
+    border: none;
+    cursor: pointer;
+  }
+  #my-widget button:hover {
+    background: #005f47;
+  }
+</style>
+
+<script>
+  document.getElementById('widget-form').addEventListener('submit', function(e) {
+    e.preventDefault();
+    document.getElementById('status-msg').innerText = "Thanks! We'll be in touch soon.";
+    document.getElementById('status-msg').style.display = 'block';
+    this.reset();
+  });
+</script>
