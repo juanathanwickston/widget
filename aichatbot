@@ -1,1 +1,508 @@
 
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>onePOS Troubleshooter (AI-Enabled)</title>
+<!--
+  EMBED NOTES
+  ===========
+  • Drop this <div id="onepos-troubleshooter"></div> where you want the widget.
+  • Include this single file OR inline it into your page.
+  • Optional data attributes on the root <div id="onepos-troubleshooter">:
+      - data-endpoint="/api/assist"  (Preferred: your serverless endpoint that proxies to OpenAI)
+      - data-openai-key="sk-..."      (Dev only; avoid in production — use data-endpoint instead)
+      - data-model="gpt-4o-mini"      (Any chat-completions-capable model)
+      - data-brand="onePOS"            (Override brand name in prompt)
+      - data-support-url="/support"    (Link target for "Open support ticket")
+      - data-theme="dark|light|auto"   (Theme preference)
+
+  SERVERLESS ENDPOINT CONTRACT (recommended)
+  -----------------------------------------
+  POST {endpoint}
+  { question: string, context: { crumbs: string[], path: string[], matches: Array<{nodeId:string,score:number,text:string}> } }
+  -> returns text/plain streamed or JSON { answer: string }
+
+  SECURITY
+  --------
+  • Do NOT ship your OpenAI API key to the browser. Use data-endpoint in prod.
+  • This file falls back to a local knowledge search if no AI creds are present.
+-->
+<style>
+  :root{
+    color-scheme: light dark;
+    --bg:#0b1220; --card:#11182a; --text:#e9eefc; --muted:#a8b3cf; --accent:#20d58a; --border:rgba(255,255,255,.08);
+    --radius:14px; --shadow:0 8px 24px rgba(0,0,0,.25);
+    --chip:#1b2640; --chipHover:#213055; --danger:#ff5d5d; --ok:#20d58a; --warn:#f5a524;
+  }
+  @media (prefers-color-scheme: light){
+    :root[data-theme="light"]{
+      --bg:#f6f7fb; --card:#ffffff; --text:#0b1220; --muted:#5b6476; --border:rgba(10,20,40,.12);
+      --chip:#f1f3f9; --chipHover:#e9ecf7; --shadow:0 8px 24px rgba(16,24,40,.08);
+    }
+  }
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--text);font:15px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:720px;margin:0 auto;padding:12px}
+  .card{background:linear-gradient(180deg,var(--card),#0f1726);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px}
+  .hdr{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+  .dot{width:10px;height:10px;border-radius:50%;background:var(--accent);box-shadow:0 0 10px var(--accent)}
+  .title{font-weight:800;letter-spacing:.2px;font-size:14px;text-transform:uppercase;color:var(--muted)}
+  .sub{font-size:12px;color:var(--muted);margin-left:auto;display:flex;gap:8px;align-items:center}
+  .crumbs{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:260px}
+  .q{font-size:18px;margin:6px 0 10px}
+  .help{font-size:13px;color:var(--muted);margin-top:2px}
+  .btns{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}
+  button{appearance:none;border:1px solid var(--border);background:var(--chip);color:var(--text);padding:8px 10px;border-radius:10px;font-size:14px;cursor:pointer}
+  button:hover{filter:brightness(1.08);background:var(--chipHover)}
+  .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+  .pill{border:1px solid var(--border);padding:4px 10px;border-radius:999px;font-size:12px;color:var(--muted)}
+  .steps{margin-top:8px;padding:12px;border:1px solid var(--border);border-radius:12px;background:rgba(255,255,255,.03)}
+  .steps li{margin:6px 0}
+  .nav{display:flex;gap:8px;margin-top:10px}
+  .muted{color:var(--muted)}
+  .sr-only{position:absolute;left:-9999px}
+  .ai{margin-top:12px;border:1px solid var(--border);border-radius:12px;padding:12px;background:rgba(255,255,255,.03);display:grid;gap:8px}
+  .ai-head{display:flex;gap:8px;align-items:center}
+  .ai-head .badge{font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--border);color:var(--muted)}
+  .ai-input{display:grid;gap:8px}
+  textarea{width:100%;min-height:70px;resize:vertical;border-radius:10px;border:1px solid var(--border);background:var(--chip);color:var(--text);padding:10px}
+  .ai-actions{display:flex;gap:8px;align-items:center}
+  .ai-output{white-space:pre-wrap;border-top:1px dashed var(--border);padding-top:8px;font-size:14px}
+  .hint{font-size:12px;color:var(--muted)}
+  .search{display:flex;gap:8px;align-items:center;margin-top:8px}
+  .search input{flex:1;border-radius:10px;border:1px solid var(--border);background:var(--chip);color:var(--text);padding:8px}
+  .match{font-size:12px;color:var(--muted)}
+  .kbd{font-family:ui-monospace,SFMono-Regular,Consolas,Menlo,monospace;font-size:12px;border:1px solid var(--border);border-bottom-width:2px;padding:2px 6px;border-radius:6px;background:var(--chip)}
+  .toast{position:fixed;inset:auto 16px 16px auto;background:#101827;color:#e5e7eb;border:1px solid var(--border);padding:8px 10px;border-radius:10px;box-shadow:var(--shadow);opacity:0;transform:translateY(8px);transition:all .2s ease}
+  .toast.show{opacity:1;transform:translateY(0)}
+  @media (max-width:420px){ .q{font-size:16px} .crumbs{max-width:150px} }
+</style>
+</head>
+<body>
+<div class="wrap" role="region" aria-label="onePOS Troubleshooting Flow">
+  <div class="card" id="onepos-troubleshooter" data-theme="auto">
+    <div class="hdr">
+      <div class="dot" aria-hidden="true"></div>
+      <div class="title">POS Troubleshooter</div>
+      <div class="sub">
+        <span class="crumbs" id="crumbs">Start</span>
+        <span class="pill" id="hintPill">Tip: Use <span class="kbd">↑/↓</span> then <span class="kbd">Enter</span></span>
+      </div>
+    </div>
+
+    <div id="content"><!-- dynamic --></div>
+
+    <div class="search" aria-label="Quick search">
+      <input id="searchBox" type="search" placeholder="Search issues (e.g., 'printer 115200', 'KDS route')" aria-label="Search troubleshooting content" />
+      <button id="searchBtn" type="button">Search</button>
+    </div>
+
+    <section class="ai" aria-label="AI Assistant">
+      <div class="ai-head">
+        <span class="badge">AI Assist</span>
+        <span class="hint">Ask a question in your own words. We’ll cite what to try.</span>
+      </div>
+      <div class="ai-input">
+        <label class="sr-only" for="aiQ">Question</label>
+        <textarea id="aiQ" placeholder="e.g., 'My SNBC S80 prints a self-test but POS won't print' (we'll match the steps and suggest next moves)"></textarea>
+        <div class="ai-actions">
+          <button id="askBtn" type="button">Ask AI</button>
+          <button id="summBtn" type="button" title="Summarize current steps">Summarize steps</button>
+          <span class="muted" id="aiStatus" role="status" aria-live="polite"></span>
+        </div>
+      </div>
+      <div class="ai-output" id="aiOut" aria-live="polite"></div>
+    </section>
+
+    <div class="nav">
+      <button id="backBtn" type="button" disabled>← Back</button>
+      <button id="restartBtn" type="button">Restart</button>
+      <button id="copyPathBtn" type="button" title="Copy breadcrumb path">Copy Path</button>
+      <a id="supportLink" class="pill" href="#" target="_blank" rel="noopener">Open support ticket</a>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+/***** Configurable helpers *****/
+const root = document.getElementById("onepos-troubleshooter");
+const CONFIG = {
+  endpoint: root.dataset.endpoint || null,
+  openaiKey: root.dataset.openaiKey || null, // Dev-only; avoid in production
+  model: root.dataset.model || "gpt-4o-mini",
+  brand: root.dataset.brand || "onePOS",
+  supportUrl: root.dataset.supportUrl || "#",
+  theme: (root.dataset.theme || "auto").toLowerCase(),
+};
+if(CONFIG.theme === 'light') document.documentElement.setAttribute('data-theme','light');
+
+/***** Knowledge graph (flows) *****/
+const FLOW = { id: "root", prompt: "What seems to be the issue?", options: [
+  { label: "Printer isn’t printing", next: "printer_offline" },
+  { label: "Menu changes aren’t showing", next: "menu_not_updating" },
+  { label: "Card reader / payments failing", next: "card_reader" },
+  { label: "Network / terminals offline", next: "network" },
+  { label: "KDS not showing tickets", next: "kds" }
+]};
+
+const NODES = {
+  printer_offline:{ prompt:"Let’s check the obvious first.", steps:[
+    "Is the printer powered on and paper loaded?",
+    "Print a self-test (hold feed while powering on).",
+    "If self-test prints, power cycle the printer.",
+    "Check cable path: printer → COM/USB/Ethernet → terminal/switch.",
+  ], options:[
+    { label:"Self-test failed", next:"printer_selftest_failed" },
+    { label:"Self-test OK but POS won’t print", next:"printer_pos_config" }
+  ]},
+  printer_selftest_failed:{ prompt:"Hardware path likely at fault.", steps:[
+    "Try a different outlet and known-good power cable.",
+    "Try a different data cable/port (USB/COM/Ethernet).",
+    "Swap with a known-good printer if available.",
+    "If serial: verify correct null-modem/adapter in chain."
+  ], options:[
+    { label:"Fixed it", next:"done_fixed" },
+    { label:"Still failing", next:"printer_rma" }
+  ]},
+  printer_pos_config:{ prompt:"POS configuration time.", steps:[
+    "Verify device mapping in Console (Printer → correct terminal).",
+    "For serial printers: Device=Printer–Serial, Port=1 (physical COM1), Params=115200,n,8,1.",
+    "Match baud rate to the printer self-test (115200 recommended).",
+    "Test print from the POS/Console and power cycle after a test page."
+  ], options:[
+    { label:"Printing now", next:"done_fixed" },
+    { label:"Still not printing", next:"printer_logs" }
+  ]},
+  printer_logs:{ prompt:"Dig a little deeper.", steps:[
+    "Check Windows device manager / COM port assignment (if applicable).",
+    "Confirm driver installed and not showing warnings.",
+    "Check firewall/antivirus exceptions for POS print service.",
+    "Escalate to support with logs and screenshots."
+  ], options:[
+    { label:"Open support ticket", next:"open_ticket" },
+    { label:"Go back", back:true }
+  ]},
+  printer_rma:{ prompt:"Suspected hardware failure.", steps:[
+    "Document serial number and site details.",
+    "Attach photo of error lights/self-test attempt.",
+    "Proceed with RMA/replacement process."
+  ], options:[
+    { label:"Open support ticket", next:"open_ticket" },
+    { label:"Restart", next:"root" }
+  ]},
+
+  menu_not_updating:{ prompt:"Menu changes aren’t live—let’s sync.", steps:[
+    "Confirm you saved/published changes in Console.",
+    "Trigger a menu sync/push to terminals.",
+    "Check that item belongs to the correct Screen Group & Sales Category.",
+    "Verify price levels/time-based rules (happy hour, groups).",
+    "Restart terminal app to force refresh."
+  ], options:[
+    { label:"Changes appear now", next:"done_fixed" },
+    { label:"Still missing", next:"menu_cache" }
+  ]},
+  menu_cache:{ prompt:"Deep refresh and scope check.", steps:[
+    "Double-check you edited the correct store/environment.",
+    "For multi-unit: ensure changes on the correct profile/template.",
+    "Clear local cache or restart the device.",
+    "If mirrored items: confirm the parent template updated."
+  ], options:[
+    { label:"Resolved", next:"done_fixed" },
+    { label:"Escalate", next:"open_ticket" }
+  ]},
+
+  card_reader:{ prompt:"Payments failing—narrow it down.", steps:[
+    "Check reader power/USB pairing and indicator lights.",
+    "Restart reader and POS app; reseat cables.",
+    "Try a $0.01 test transaction or card swipe/dip/tap variety.",
+    "Verify network path (readers often need outbound access).",
+    "If tokenized gateway: confirm credentials aren’t expired."
+  ], options:[
+    { label:"Works after restart", next:"done_fixed" },
+    { label:"Hardware error persists", next:"card_reader_hw" }
+  ]},
+  card_reader_hw:{ prompt:"Hardware or configuration.", steps:[
+    "Test on another terminal/USB port.",
+    "Update firmware if supported.",
+    "Swap with a known-good reader.",
+    "Collect device serial, firmware, and error codes."
+  ], options:[
+    { label:"Open support ticket", next:"open_ticket" },
+    { label:"Restart", next:"root" }
+  ]},
+
+  network:{ prompt:"Network / terminals offline.", steps:[
+    "Check switch/router lights and ISP status.",
+    "Reboot modem → router → switch → terminals (in that order).",
+    "Verify SSID/ethernet for terminals; avoid guest/VLAN mismatch.",
+    "Ping server/local controller; check DHCP/IP conflicts.",
+    "If using VPN/tunnel: confirm it’s connected."
+  ], options:[
+    { label:"Back online", next:"done_fixed" },
+    { label:"Still offline", next:"network_deep" }
+  ]},
+  network_deep:{ prompt:"Deeper network checks.", steps:[
+    "Check cables for link lights; replace any suspect runs.",
+    "Confirm POS server/services are running.",
+    "Check firewall rules for POS ports to terminals/printers.",
+    "Escalate with topology diagram and IPs."
+  ], options:[
+    { label:"Open support ticket", next:"open_ticket" },
+    { label:"Restart", next:"root" }
+  ]},
+
+  kds:{ prompt:"KDS not receiving tickets.", steps:[
+    "Verify KDS device is online and on the correct network/VLAN.",
+    "Confirm KDS station mapping in Console (items → KDS route).",
+    "Check that order types and coursing rules match expectations.",
+    "Restart KDS app/device to resubscribe."
+  ], options:[
+    { label:"Tickets flowing", next:"done_fixed" },
+    { label:"Still empty", next:"kds_deep" }
+  ]},
+  kds_deep:{ prompt:"Rule mapping & connectivity.", steps:[
+    "Validate printers/KDS share the same item routes (no missing category).",
+    "Check any throttling/hold logic or expo rules.",
+    "Inspect logs for subscription errors or timeouts."
+  ], options:[
+    { label:"Open support ticket", next:"open_ticket" },
+    { label:"Restart", next:"root" }
+  ]},
+
+  done_fixed:{ prompt:"Nice! Issue resolved.", steps:[
+    "Document what fixed it so others can repeat.",
+    "If this repeats, capture before/after state for trends."
+  ], options:[ { label:"Restart", next:"root" } ]},
+
+  open_ticket:{ prompt:"Open a support ticket.", steps:[
+    "Include site name, contact, urgency, and clear problem summary.",
+    "Attach screenshots/logs/error codes and what you tried already."
+  ], options:[ { label:"Restart", next:"root" } ]},
+};
+
+/***** State *****/
+const content = document.getElementById("content");
+const backBtn = document.getElementById("backBtn");
+const restartBtn = document.getElementById("restartBtn");
+const copyPathBtn = document.getElementById("copyPathBtn");
+const crumbsEl = document.getElementById("crumbs");
+const hintPill = document.getElementById("hintPill");
+const supportLink = document.getElementById("supportLink");
+
+const searchBox = document.getElementById("searchBox");
+const searchBtn = document.getElementById("searchBtn");
+
+const aiQ = document.getElementById("aiQ");
+const askBtn = document.getElementById("askBtn");
+const summBtn = document.getElementById("summBtn");
+const aiOut = document.getElementById("aiOut");
+const aiStatus = document.getElementById("aiStatus");
+const toast = document.getElementById("toast");
+
+let stack = JSON.parse(localStorage.getItem("onepos.stack")||"null") || [FLOW];
+let chosen = JSON.parse(localStorage.getItem("onepos.chosen")||"null") || [];
+let currentIndex = 0;
+
+supportLink.href = CONFIG.supportUrl;
+
+function saveState(){
+  localStorage.setItem("onepos.stack", JSON.stringify(stack));
+  localStorage.setItem("onepos.chosen", JSON.stringify(chosen));
+}
+
+/***** Render *****/
+function renderNode(node){
+  content.innerHTML = "";
+  const q = document.createElement("div"); q.className = "q"; q.textContent = node.prompt; content.appendChild(q);
+
+  if(node.steps?.length){
+    const help = document.createElement("div"); help.className = "help"; help.textContent = "Work through these steps:"; content.appendChild(help);
+    const ol = document.createElement("ol"); ol.className = "steps";
+    node.steps.forEach(s=>{ const li = document.createElement("li"); li.textContent = s; ol.appendChild(li); });
+    content.appendChild(ol);
+    const row = document.createElement("div"); row.className = "row";
+    const copyBtn = document.createElement("button"); copyBtn.textContent = "Copy steps";
+    copyBtn.onclick = async ()=>{
+      const text = [node.prompt, ...node.steps.map((s,i)=>`${i+1}. ${s}`)].join("\n");
+      try{ await navigator.clipboard.writeText(text); flashToast("Copied steps"); }catch{}
+    };
+    const printBtn = document.createElement("button"); printBtn.textContent = "Print"; printBtn.onclick = ()=> window.print();
+    row.append(copyBtn, printBtn); content.appendChild(row);
+  }
+
+  if(node.options?.length){
+    const btns = document.createElement("div"); btns.className = "btns"; btns.setAttribute("role","listbox");
+    node.options.forEach((opt, idx)=>{
+      const b = document.createElement("button"); b.textContent = opt.label; b.setAttribute("role","option"); b.tabIndex = (idx===0?0:-1);
+      b.onclick = ()=>{ if(opt.back){ goBack(); return; } chosen.push(opt.label); gotoNode(opt.next); };
+      btns.appendChild(b);
+    });
+    content.appendChild(btns);
+  }
+
+  // Breadcrumbs
+  crumbsEl.textContent = chosen.length ? chosen.join(" • ") : "Start";
+
+  // Nav state
+  backBtn.disabled = (stack.length <= 1);
+  currentIndex = 0; focusFirstButton(); saveState();
+
+  // Fire analytics hook
+  dispatchEvent(new CustomEvent("pos-helper-analytics", { detail:{type:"view", nodeId:getCurrentId(), path:stack.map(n=>n.prompt)} }));
+}
+
+function gotoNode(id){
+  if(id === "root"){ stack = [FLOW]; chosen = []; renderNode(FLOW); return; }
+  const next = NODES[id]; if(!next){ console.warn("Missing node:", id); return; }
+  stack.push(Object.assign({__id:id}, next)); renderNode(next);
+}
+
+function getCurrentId(){ return stack.at(-1)?.__id || "root"; }
+
+function goBack(){ if(stack.length>1){ stack.pop(); chosen.pop(); renderNode(stack.at(-1)); } }
+
+function focusFirstButton(){ const first = content.querySelector(".btns button"); if(first) first.focus(); }
+
+content.addEventListener("keydown", (e)=>{
+  const btns = Array.from(content.querySelectorAll(".btns button")); if(!btns.length) return;
+  const i = btns.indexOf(document.activeElement);
+  if(["ArrowRight","ArrowDown"].includes(e.key)){ e.preventDefault(); btns[(i+1+btns.length)%btns.length].focus(); }
+  if(["ArrowLeft","ArrowUp"].includes(e.key)){ e.preventDefault(); btns[(i-1+btns.length)%btns.length].focus(); }
+  if(e.key === "Home"){ e.preventDefault(); btns[0].focus(); }
+  if(e.key === "End"){ e.preventDefault(); btns[btns.length-1].focus(); }
+});
+
+backBtn.onclick = goBack;
+restartBtn.onclick = ()=>{ stack = [FLOW]; chosen = []; renderNode(FLOW); };
+copyPathBtn.onclick = async ()=>{
+  const path = chosen.length ? chosen.join(" > ") : "Start"; await navigator.clipboard.writeText(path); flashToast("Path copied");
+};
+
+/***** Search over local flow *****/
+const SEARCH_INDEX = buildSearchIndex();
+searchBtn.onclick = ()=> runLocalSearch(searchBox.value);
+searchBox.addEventListener('keydown', e=>{ if(e.key==='Enter') runLocalSearch(searchBox.value); });
+
+function buildSearchIndex(){
+  const idx = [];
+  const add = (id, text)=> idx.push({id, text: text.toLowerCase()});
+  add('root', FLOW.prompt + ' ' + FLOW.options.map(o=>o.label).join(' '));
+  for(const [id, node] of Object.entries(NODES)){
+    const block = [node.prompt, ...(node.steps||[]), ...(node.options?.map(o=>o.label)||[])].join(' \n ');
+    add(id, block);
+  }
+  return idx;
+}
+function runLocalSearch(q){
+  const term = q.trim().toLowerCase(); if(!term){ flashToast('Enter a search term'); return; }
+  const scored = SEARCH_INDEX.map(r=>({ nodeId:r.id, score: score(r.text, term) }))
+    .filter(r=>r.score>0).sort((a,b)=>b.score-a.score).slice(0,5);
+  if(!scored.length){ flashToast('No matches'); return; }
+  // Jump to best match and show a small note
+  const best = scored[0]; if(best.nodeId==='root'){ renderNode(FLOW); } else { stack.push(Object.assign({__id:best.nodeId}, NODES[best.nodeId])); renderNode(NODES[best.nodeId]); }
+  flashToast(`Jumped to best match (score ${best.score.toFixed(2)})`);
+  // Keep latest matches for AI context
+  window.__lastMatches = scored.map(m=>({ ...m, text: SEARCH_INDEX.find(r=>r.id===m.nodeId)?.text||'' }));
+}
+function score(text, term){
+  // very small BM25-ish: term frequency + proximity bonus
+  const parts = term.split(/\s+/).filter(Boolean);
+  let s = 0; for(const p of parts){ const re = new RegExp(p.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'), 'g'); const matches = text.match(re); if(matches) s += Math.sqrt(matches.length); }
+  if(parts.length>1){ const phrase = text.indexOf(term); if(phrase>=0) s += 1.5; }
+  return s;
+}
+
+/***** AI Assist *****/
+askBtn.onclick = handleAsk;
+summBtn.onclick = ()=>{
+  const node = stack.at(-1); if(!node?.steps?.length){ flashToast('No steps to summarize'); return; }
+  aiQ.value = `Summarize and reorder these steps for clarity, then give the top 3 likely root causes and next actions:\n\n${node.prompt}\n${node.steps.map((s,i)=>`${i+1}. ${s}`).join('\n')}`;
+  handleAsk();
+};
+
+async function handleAsk(){
+  const q = aiQ.value.trim(); if(!q){ flashToast('Ask something first'); return; }
+  aiStatus.textContent = 'Thinking…'; aiOut.textContent = '';
+  const context = buildContext();
+  try{
+    if(CONFIG.endpoint){
+      // Preferred: your backend handles auth + model choice
+      const res = await fetch(CONFIG.endpoint, {
+        method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ question:q, context })
+      });
+      if(!res.ok) throw new Error(`Endpoint ${res.status}`);
+      if(res.headers.get('content-type')?.includes('text/plain')){
+        const reader = res.body.getReader(); const dec = new TextDecoder();
+        let chunk; while(!(chunk = await reader.read()).done){ aiOut.textContent += dec.decode(chunk.value); }
+      } else {
+        const data = await res.json(); aiOut.textContent = data.answer || JSON.stringify(data);
+      }
+    } else if(CONFIG.openaiKey){
+      const sys = buildSystemPrompt();
+      const payload = { model: CONFIG.model, messages:[{role:'system', content: sys}, {role:'user', content: q}], temperature:0.2 };
+      const res = await fetch('https://api.openai.com/v1/chat/completions', {
+        method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${CONFIG.openaiKey}`}, body: JSON.stringify(payload)
+      });
+      if(!res.ok) throw new Error('OpenAI error');
+      const data = await res.json(); aiOut.textContent = data.choices?.[0]?.message?.content?.trim() || 'No answer';
+    } else {
+      // Fallback: local RAG over flows
+      aiOut.textContent = localAnswer(q, context);
+    }
+  } catch(err){
+    console.error(err); aiOut.textContent = `Error: ${err.message}`;
+  } finally {
+    aiStatus.textContent = '';
+    dispatchEvent(new CustomEvent('pos-helper-analytics', { detail:{type:'ask', question:q, nodeId:getCurrentId()} }));
+  }
+}
+
+function buildContext(){
+  const nodeId = getCurrentId();
+  const node = nodeId==='root'?FLOW:NODES[nodeId];
+  const steps = node.steps||[];
+  const matches = (window.__lastMatches||[]).slice(0,5);
+  const path = stack.map(n=>n.__id||'root');
+  return { nodeId, steps, path, crumbs:[...chosen], matches };
+}
+
+function buildSystemPrompt(){
+  return `You are an on-call ${CONFIG.brand} POS support assistant.\n`+
+  `Be concise, decisive, and safe. Use numbered steps. Infer likely root causes.\n`+
+  `If the question matches local procedures, cite the exact steps by name in bold like **Printer POS configuration** and tailor them.\n`+
+  `Ask for critical missing info only if it blocks next action.\n`+
+  `When hardware might be faulty, recommend swapping with a known-good device and collecting serial/firmware.\n`+
+  `If resolution requires escalation, list what logs and screenshots to include.`;
+}
+
+function localAnswer(q, ctx){
+  const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
+  const scored = Object.entries(NODES).map(([id,node])=>{
+    const text = [node.prompt, (node.steps||[]).join(' '), (node.options||[]).map(o=>o.label).join(' ')].join(' ');
+    return { id, score: score(text.toLowerCase(), terms.join(' ')), node };
+  }).filter(x=>x.score>0).sort((a,b)=>b.score-a.score).slice(0,3);
+  if(!scored.length){ return "I couldn't match that to a known flow. Try rephrasing or use the categories above."; }
+  const lines = [];
+  lines.push(`Top matches: ${scored.map(s=>`#${s.id}`).join(', ')}`);
+  const best = scored[0].node; const title = best.prompt;
+  lines.push(`\nRecommended steps:`);
+  (best.steps||[]).forEach((s,i)=> lines.push(`${i+1}. ${s}`));
+  lines.push(`\nIf unresolved: open a ticket and include logs/screenshots.`);
+  return lines.join('\n');
+}
+
+/***** UX helpers *****/
+function flashToast(msg){ toast.textContent = msg; toast.classList.add('show'); setTimeout(()=>toast.classList.remove('show'), 1600); }
+
+/***** Init *****/
+renderNode(stack.at(-1) || FLOW);
+
+// Persist theme hint visibility for power users
+if(localStorage.getItem('onepos.hintHidden')==='1'){ hintPill.style.display='none'; }
+hintPill.onclick = ()=>{ hintPill.style.display='none'; localStorage.setItem('onepos.hintHidden','1'); };
+</script>
+</body>
+</html>
